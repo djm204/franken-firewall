@@ -259,7 +259,7 @@ writeFileSync("./guardrails.config.json", JSON.stringify(config, null, 2));
 
 Copy and adapt the preset that fits your use case.
 
-**Production — strict, single provider, full guardrails**
+#### Production — strict, single provider, full guardrails
 
 ```json
 {
@@ -279,7 +279,7 @@ Copy and adapt the preset that fits your use case.
 }
 ```
 
-**Code generation — strict tier, dependency whitelist enforced**
+#### Code generation — strict tier, dependency whitelist enforced
 
 ```json
 {
@@ -303,7 +303,7 @@ Copy and adapt the preset that fits your use case.
 }
 ```
 
-**Customer-facing chatbot — PII mandatory, no code output expected**
+#### Customer-facing chatbot — PII mandatory, no code output expected
 
 ```json
 {
@@ -323,7 +323,7 @@ Copy and adapt the preset that fits your use case.
 }
 ```
 
-**Internal tooling — moderate tier, higher budget**
+#### Internal tooling — moderate tier, higher budget
 
 ```json
 {
@@ -343,7 +343,7 @@ Copy and adapt the preset that fits your use case.
 }
 ```
 
-**Local development — permissive, no cost ceiling**
+#### Local development — permissive, no cost ceiling
 
 ```json
 {
@@ -606,7 +606,7 @@ That's it. The pipeline, all interceptors, and all tests require zero changes.
 
 ## Project structure
 
-```
+```text
 src/
   types/                  Canonical schemas: UnifiedRequest, UnifiedResponse, GuardrailViolation
   config/                 Config loader and GuardrailsConfig interface
