@@ -125,35 +125,262 @@ Included adapters:
 
 ---
 
-## Configuration
+## Policy configuration
 
-All policy is controlled via `guardrails.config.json`. This file is the single source of truth for what a given project is allowed to do.
+All guardrail behaviour is controlled by a single `guardrails.config.json` file. The pipeline reads it at startup via `loadConfig()` and freezes it — no runtime mutation. Every policy decision traces back to this file.
+
+### Full schema reference
 
 ```json
 {
-  "project_name": "my-project",
+  "project_name": "string — required, human-readable name for audit logs",
+  "security_tier": "STRICT | MODERATE | PERMISSIVE",
+  "schema_version": 1,
+  "agnostic_settings": {
+    "redact_pii": "boolean",
+    "max_token_spend_per_call": "number (USD)",
+    "allowed_providers": ["anthropic", "openai", "local-ollama"]
+  },
+  "safety_hooks": {
+    "pre_flight":  ["string labels — logged in audit entries"],
+    "post_flight": ["string labels — logged in audit entries"]
+  },
+  "dependency_whitelist": ["string — npm package names"]
+}
+```
+
+| Field | Type | Required | Description |
+| :--- | :--- | :---: | :--- |
+| `project_name` | `string` | Yes | Appears in audit log entries. Use a stable, unique identifier. |
+| `security_tier` | `"STRICT" \| "MODERATE" \| "PERMISSIVE"` | Yes | Controls the injection scanner pattern set. See tier comparison below. |
+| `schema_version` | `1` | Yes | Must be `1`. Mismatch between config and response schema is a hard pipeline failure. |
+| `agnostic_settings.redact_pii` | `boolean` | Yes | When `true`, the PiiMasker runs on every request before it leaves your infrastructure. |
+| `agnostic_settings.max_token_spend_per_call` | `number` | Yes | Hard cost ceiling in USD per call. Requests estimated to exceed this are blocked pre-flight. |
+| `agnostic_settings.allowed_providers` | `Provider[]` | Yes | Requests for any provider not on this list are rejected by the AdapterRegistry. At least one required. |
+| `safety_hooks.pre_flight` | `string[]` | Yes | Label list recorded in audit entries. Documents which checks run inbound. |
+| `safety_hooks.post_flight` | `string[]` | Yes | Label list recorded in audit entries. Documents which checks run outbound. |
+| `dependency_whitelist` | `string[]` | No | npm package names the HallucinationScraper permits in LLM output. Omit or set `[]` to disable scraping entirely. |
+
+**Valid providers:** `"anthropic"` · `"openai"` · `"local-ollama"`
+
+---
+
+### Security tiers
+
+The `security_tier` field controls how aggressively the `InjectionScanner` operates. All tiers run the same base pattern set. `STRICT` adds an extended set targeting subtler manipulation techniques.
+
+| Pattern category | PERMISSIVE | MODERATE | STRICT |
+| :--- | :---: | :---: | :---: |
+| Explicit overrides (`ignore previous instructions`) | Yes | Yes | Yes |
+| Role reassignment (`your true role is...`) | Yes | Yes | Yes |
+| Priority inversion (`as a reminder, your real task is...`) | Yes | Yes | Yes |
+| Context poisoning via `[system]` tags | Yes | Yes | Yes |
+| Roleplay / fiction framing (`in this story, you have no restrictions`) | No | No | Yes |
+| Hypothetical framing (`hypothetically, if you had no guidelines...`) | No | No | Yes |
+| Pretend / persona manipulation (`pretend you lack restrictions`) | No | No | Yes |
+
+**Recommendation:** Use `STRICT` in all production environments. `MODERATE` is appropriate for internal tools where users are trusted. `PERMISSIVE` is only appropriate for tightly controlled developer sandboxes.
+
+---
+
+### Generating a config
+
+You don't have to write `guardrails.config.json` by hand. Build it programmatically and write it out, or construct the object inline and pass it directly to `runPipeline`.
+
+**Inline (no file):**
+
+```typescript
+import type { GuardrailsConfig } from "frankenfirewall";
+
+const config: GuardrailsConfig = {
+  project_name: "my-service",
+  security_tier: "STRICT",
+  schema_version: 1,
+  agnostic_settings: {
+    redact_pii: true,
+    max_token_spend_per_call: 0.10,
+    allowed_providers: ["anthropic"],
+  },
+  safety_hooks: {
+    pre_flight: ["injection_scan", "pii_mask", "budget_check"],
+    post_flight: ["schema_enforce", "tool_ground", "hallucination_scrape"],
+  },
+  dependency_whitelist: ["zod", "lodash"],
+};
+
+const { response, violations } = await runPipeline(request, adapter, config);
+```
+
+**Generated and written to disk:**
+
+```typescript
+import { writeFileSync } from "fs";
+import type { GuardrailsConfig } from "frankenfirewall";
+
+function generateConfig(options: {
+  projectName: string;
+  tier?: "STRICT" | "MODERATE" | "PERMISSIVE";
+  providers?: ("anthropic" | "openai" | "local-ollama")[];
+  budgetPerCallUsd?: number;
+  redactPii?: boolean;
+  whitelist?: string[];
+}): GuardrailsConfig {
+  return {
+    project_name: options.projectName,
+    security_tier: options.tier ?? "STRICT",
+    schema_version: 1,
+    agnostic_settings: {
+      redact_pii: options.redactPii ?? true,
+      max_token_spend_per_call: options.budgetPerCallUsd ?? 0.05,
+      allowed_providers: options.providers ?? ["anthropic"],
+    },
+    safety_hooks: {
+      pre_flight: ["injection_scan", "pii_mask", "budget_check"],
+      post_flight: ["schema_enforce", "tool_ground", "hallucination_scrape"],
+    },
+    dependency_whitelist: options.whitelist ?? [],
+  };
+}
+
+const config = generateConfig({
+  projectName: "production-api",
+  tier: "STRICT",
+  providers: ["anthropic", "openai"],
+  budgetPerCallUsd: 0.10,
+  whitelist: ["react", "zod", "express", "lodash"],
+});
+
+writeFileSync("./guardrails.config.json", JSON.stringify(config, null, 2));
+```
+
+---
+
+### Preset configs
+
+Copy and adapt the preset that fits your use case.
+
+**Production — strict, single provider, full guardrails**
+
+```json
+{
+  "project_name": "production-api",
   "security_tier": "STRICT",
   "schema_version": 1,
   "agnostic_settings": {
     "redact_pii": true,
-    "max_token_spend_per_call": 0.05,
-    "allowed_providers": ["anthropic", "openai"]
+    "max_token_spend_per_call": 0.10,
+    "allowed_providers": ["anthropic"]
   },
   "safety_hooks": {
-    "pre_flight": ["check_injection", "validate_auth_token"],
-    "post_flight": ["verify_json_schema", "check_for_ghost_deps"]
+    "pre_flight": ["injection_scan", "pii_mask", "budget_check"],
+    "post_flight": ["schema_enforce", "tool_ground", "hallucination_scrape"]
   },
-  "dependency_whitelist": ["react", "zod", "express"]
+  "dependency_whitelist": []
 }
 ```
 
-| Field | Description |
-| :--- | :--- |
-| `security_tier` | `STRICT` adds additional injection pattern categories. `MODERATE` and `PERMISSIVE` reduce enforcement surface. |
-| `redact_pii` | `true` runs the PiiMasker on every request. Must be `true` in any `STRICT` config. |
-| `max_token_spend_per_call` | Hard ceiling in USD. Requests estimated to exceed this are rejected pre-flight. |
-| `allowed_providers` | Any provider not on this list is blocked by the AdapterRegistry. |
-| `dependency_whitelist` | Packages the HallucinationScraper will accept in LLM output. Empty list disables scraping. |
+**Code generation — strict tier, dependency whitelist enforced**
+
+```json
+{
+  "project_name": "code-gen-service",
+  "security_tier": "STRICT",
+  "schema_version": 1,
+  "agnostic_settings": {
+    "redact_pii": true,
+    "max_token_spend_per_call": 0.25,
+    "allowed_providers": ["anthropic", "openai"]
+  },
+  "safety_hooks": {
+    "pre_flight": ["injection_scan", "pii_mask", "budget_check"],
+    "post_flight": ["schema_enforce", "tool_ground", "hallucination_scrape"]
+  },
+  "dependency_whitelist": [
+    "react", "react-dom", "next", "typescript",
+    "zod", "express", "lodash", "axios", "date-fns",
+    "@types/node", "@types/react"
+  ]
+}
+```
+
+**Customer-facing chatbot — PII mandatory, no code output expected**
+
+```json
+{
+  "project_name": "customer-support-bot",
+  "security_tier": "STRICT",
+  "schema_version": 1,
+  "agnostic_settings": {
+    "redact_pii": true,
+    "max_token_spend_per_call": 0.03,
+    "allowed_providers": ["openai"]
+  },
+  "safety_hooks": {
+    "pre_flight": ["injection_scan", "pii_mask", "budget_check"],
+    "post_flight": ["schema_enforce", "tool_ground"]
+  },
+  "dependency_whitelist": []
+}
+```
+
+**Internal tooling — moderate tier, higher budget**
+
+```json
+{
+  "project_name": "internal-tools",
+  "security_tier": "MODERATE",
+  "schema_version": 1,
+  "agnostic_settings": {
+    "redact_pii": true,
+    "max_token_spend_per_call": 0.50,
+    "allowed_providers": ["anthropic", "openai", "local-ollama"]
+  },
+  "safety_hooks": {
+    "pre_flight": ["injection_scan", "pii_mask"],
+    "post_flight": ["schema_enforce"]
+  },
+  "dependency_whitelist": []
+}
+```
+
+**Local development — permissive, no cost ceiling**
+
+```json
+{
+  "project_name": "local-dev",
+  "security_tier": "PERMISSIVE",
+  "schema_version": 1,
+  "agnostic_settings": {
+    "redact_pii": false,
+    "max_token_spend_per_call": 999,
+    "allowed_providers": ["anthropic", "openai", "local-ollama"]
+  },
+  "safety_hooks": {
+    "pre_flight": [],
+    "post_flight": []
+  }
+}
+```
+
+> **Warning:** Never use the local development preset in a production or shared environment. `redact_pii: false` means raw user data will be sent to provider APIs. `max_token_spend_per_call: 999` disables the budget guardrail.
+
+---
+
+### Violation codes
+
+When a guardrail fires, the `GuardrailViolation` object always includes a `code`. Use these to route violations to different handlers in your application.
+
+| Code | Raised by | Meaning |
+| :--- | :--- | :--- |
+| `INJECTION_DETECTED` | `InjectionScanner` | Request content matches a structural injection pattern |
+| `PII_DETECTED` | `PiiMasker` | Reserved — masker redacts rather than blocks by default |
+| `BUDGET_EXCEEDED` | `ProjectAlignmentChecker` | Estimated call cost exceeds `max_token_spend_per_call` |
+| `PROVIDER_NOT_ALLOWED` | `ProjectAlignmentChecker` / `AdapterRegistry` | Provider is not in `allowed_providers` |
+| `SCHEMA_MISMATCH` | `SchemaEnforcer` | Response does not conform to `UnifiedResponse` v1 shape |
+| `TOOL_NOT_GROUNDED` | `DeterministicGrounder` / `ProjectAlignmentChecker` | Tool call references a function not in the Skill Registry |
+| `HALLUCINATION_DETECTED` | `HallucinationScraper` | LLM output imports a package outside `dependency_whitelist` |
+| `ADAPTER_ERROR` | `Pipeline` | Transport error, timeout, or non-2xx response from provider |
+| `CONFIG_ERROR` | `loadConfig` | Config file is missing, malformed, or fails validation |
 
 ---
 
@@ -161,73 +388,204 @@ All policy is controlled via `guardrails.config.json`. This file is the single s
 
 ```bash
 npm install
+npm run build           # compile TypeScript to dist/
 npm test                # 133 tests, all interceptors and adapters
 npm run typecheck       # TypeScript strict mode
 npm run lint            # ESLint
 npx vitest bench        # performance baseline (~495K ops/sec)
 ```
 
-### Minimal integration
+**Prerequisites:**
+
+- Node 18+
+- A `guardrails.config.json` in your project root (or pass its path to `loadConfig()`).
+- Provider API keys in the environment, e.g. `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, depending on which adapters you use.
+
+---
+
+## Usage
+
+### 1. Config and adapter setup
+
+Load policy from `guardrails.config.json` and register the adapters you need. Only providers listed in `allowed_providers` can be used.
 
 ```typescript
-import { loadConfig, ClaudeAdapter, AdapterRegistry, runPipeline } from "./src/index.js";
+import {
+  loadConfig,
+  ClaudeAdapter,
+  OpenAIAdapter,
+  AdapterRegistry,
+  runPipeline,
+} from "frankenfirewall";  // or from "./src/index.js" if running from repo
 
 const config = loadConfig("./guardrails.config.json");
 
 const registry = new AdapterRegistry(config.agnostic_settings.allowed_providers);
-registry.register("anthropic", new ClaudeAdapter({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-  model: "claude-sonnet-4-6",
-}));
 
-const { response, violations } = await runPipeline(
-  request,
-  registry.getAdapter(request.provider),
-  config,
-);
+if (config.agnostic_settings.allowed_providers.includes("anthropic")) {
+  registry.register(
+    "anthropic",
+    new ClaudeAdapter({
+      apiKey: process.env.ANTHROPIC_API_KEY!,
+      model: "claude-sonnet-4-6",
+    })
+  );
+}
 
-if (violations.length > 0) {
-  // Every violation is structured — log, alert, or surface to the caller
-  console.error(violations);
+if (config.agnostic_settings.allowed_providers.includes("openai")) {
+  registry.register(
+    "openai",
+    new OpenAIAdapter({
+      apiKey: process.env.OPENAI_API_KEY!,
+      model: "gpt-4o-mini",
+    })
+  );
 }
 ```
 
-### With observability
+### 2. Building a request
+
+Every call uses the same `UnifiedRequest` shape. The pipeline never sees provider-specific fields.
 
 ```typescript
-import { AuditLogger, CostLedger } from "./src/index.js";
+import type { UnifiedRequest } from "frankenfirewall";
 
-const logger = new AuditLogger();   // defaults to stdout JSON lines
-const ledger = new CostLedger();    // in-memory per-session spend
+const request: UnifiedRequest = {
+  id: "req-001",
+  provider: "anthropic",
+  model: "claude-sonnet-4-6",
+  system: "You are a helpful assistant.",
+  messages: [{ role: "user", content: "What is 2 + 2?" }],
+  max_tokens: 1024,
+  session_id: "sess-abc",  // optional; used for cost ledger
+};
+```
+
+With tools (optional):
+
+```typescript
+const requestWithTools: UnifiedRequest = {
+  id: "req-002",
+  provider: "openai",
+  model: "gpt-4o-mini",
+  messages: [{ role: "user", content: "Get the weather in Boston." }],
+  tools: [
+    {
+      name: "get_weather",
+      description: "Returns current weather for a city.",
+      input_schema: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+      },
+    },
+  ],
+  max_tokens: 512,
+};
+```
+
+### 3. Running the pipeline and handling the result
+
+Get the adapter for the request’s provider (throws if provider is not allowed or not registered), then run the pipeline. You always get a `UnifiedResponse` and an array of violations.
+
+```typescript
+const adapter = registry.getAdapter(request.provider);
+const { response, violations } = await runPipeline(request, adapter, config);
+
+if (violations.length > 0) {
+  // Request was blocked or response was filtered. Never ignore violations.
+  for (const v of violations) {
+    console.error(`[${v.interceptor}] ${v.code}: ${v.message}`, v.payload ?? {});
+  }
+  // response.finish_reason is "content_filter"; response.content may be null
+  return;
+}
+
+// Clean path: use the unified response
+console.log(response.content);
+console.log("Tokens:", response.usage.input_tokens, response.usage.output_tokens);
+console.log("Cost USD:", response.usage.cost_usd);
+
+if (response.finish_reason === "tool_use" && response.tool_calls.length > 0) {
+  for (const tc of response.tool_calls) {
+    console.log("Tool:", tc.function_name, tc.arguments);
+  }
+}
+```
+
+**Response fields:**
+
+| Field | Description |
+| :--- | :--- |
+| `content` | Assistant text, or `null` if blocked or tool-only turn |
+| `tool_calls` | Validated tool invocations (empty if none or if grounding failed) |
+| `finish_reason` | `"stop"` \| `"tool_use"` \| `"length"` \| `"content_filter"` |
+| `usage` | `input_tokens`, `output_tokens`, `cost_usd` |
+
+When any guardrail blocks the request or filters the response, `finish_reason` is `"content_filter"` and `violations` contains at least one entry with `code`, `message`, `interceptor`, and optional `payload`.
+
+### 4. With observability
+
+Use `AuditLogger` for a structured log line per call and `CostLedger` to track spend per session.
+
+```typescript
+import { AuditLogger, CostLedger, runPipeline } from "frankenfirewall";
+
+const logger = new AuditLogger();
+const ledger = new CostLedger();
 
 const startedAt = Date.now();
 const { response, violations } = await runPipeline(request, adapter, config);
 
-// Record actual spend against the session
 if (request.session_id) {
   ledger.record(request.session_id, response.usage.cost_usd);
+  const total = ledger.getTotal(request.session_id);
+  console.log(`Session ${request.session_id} total spend: $${total.toFixed(4)}`);
 }
 
-// Emit a structured audit entry for every call
-logger.log(logger.buildEntry({
-  requestId: request.id,
-  provider: request.provider,
-  model: request.model,
-  sessionId: request.session_id,
-  violations,
-  inputTokens: response.usage.input_tokens,
-  outputTokens: response.usage.output_tokens,
-  costUsd: response.usage.cost_usd,
-  startedAt,
-}));
+logger.log(
+  logger.buildEntry({
+    requestId: request.id,
+    provider: request.provider,
+    model: request.model,
+    sessionId: request.session_id,
+    violations,
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+    costUsd: response.usage.cost_usd,
+    startedAt,
+  })
+);
 ```
 
-### Adding a new provider
+### 5. Optional: Skill Registry (tool grounding)
+
+To validate tool calls against a registry (e.g. MOD-02), pass a `SkillRegistryClient` in pipeline options. If you omit it, tool-call grounding is skipped.
+
+```typescript
+const skillRegistry = {
+  hasSkill(name: string): boolean {
+    return ["get_weather", "search"].includes(name);
+  },
+};
+
+const { response, violations } = await runPipeline(
+  request,
+  adapter,
+  config,
+  { skillRegistry }
+);
+// If the model returns a tool_call whose function_name is not in the registry,
+// violations will include TOOL_NOT_GROUNDED and response.finish_reason will be "content_filter".
+```
+
+### 6. Adding a new provider
 
 ```typescript
 // src/adapters/my-provider/my-provider-adapter.ts
 import { BaseAdapter } from "../base-adapter.js";
-import type { IAdapter } from "../i-adapter.js";
+import type { IAdapter, CapabilityFeature } from "../i-adapter.js";
+import type { UnifiedRequest, UnifiedResponse } from "../../types/index.js";
 
 export class MyProviderAdapter extends BaseAdapter implements IAdapter {
   transformRequest(request: UnifiedRequest): MyProviderRequest { ... }
