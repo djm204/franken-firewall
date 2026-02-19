@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { loadConfig, ConfigError } from "./load-config.js";
 
-const TMP = join(tmpdir(), "frankenfirewall-config-tests");
+const TMP = join(tmpdir(), "@franken/firewall-config-tests");
 
 const VALID_CONFIG = {
   project_name: "Project-Alpha",

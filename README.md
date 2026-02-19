@@ -190,7 +190,7 @@ You don't have to write `guardrails.config.json` by hand. Build it programmatica
 **Inline (no file):**
 
 ```typescript
-import type { GuardrailsConfig } from "frankenfirewall";
+import type { GuardrailsConfig } from "@franken/firewall";
 
 const config: GuardrailsConfig = {
   project_name: "my-service",
@@ -215,7 +215,7 @@ const { response, violations } = await runPipeline(request, adapter, config);
 
 ```typescript
 import { writeFileSync } from "fs";
-import type { GuardrailsConfig } from "frankenfirewall";
+import type { GuardrailsConfig } from "@franken/firewall";
 
 function generateConfig(options: {
   projectName: string;
@@ -416,7 +416,7 @@ import {
   OpenAIAdapter,
   AdapterRegistry,
   runPipeline,
-} from "frankenfirewall";  // or from "./src/index.js" if running from repo
+} from "@franken/firewall";  // or from "./src/index.js" if running from repo
 
 const config = loadConfig("./guardrails.config.json");
 
@@ -448,7 +448,7 @@ if (config.agnostic_settings.allowed_providers.includes("openai")) {
 Every call uses the same `UnifiedRequest` shape. The pipeline never sees provider-specific fields.
 
 ```typescript
-import type { UnifiedRequest } from "frankenfirewall";
+import type { UnifiedRequest } from "@franken/firewall";
 
 const request: UnifiedRequest = {
   id: "req-001",
@@ -529,7 +529,7 @@ When any guardrail blocks the request or filters the response, `finish_reason` i
 Use `AuditLogger` for a structured log line per call and `CostLedger` to track spend per session.
 
 ```typescript
-import { AuditLogger, CostLedger, runPipeline } from "frankenfirewall";
+import { AuditLogger, CostLedger, runPipeline } from "@franken/firewall";
 
 const logger = new AuditLogger();
 const ledger = new CostLedger();
