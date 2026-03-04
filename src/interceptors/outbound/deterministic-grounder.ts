@@ -2,10 +2,8 @@ import type { UnifiedResponse, ToolCall, GuardrailViolation } from "../../types/
 import { pass, block } from "../interceptor-result.js";
 import type { InterceptorResult } from "../interceptor-result.js";
 
-export interface SkillRegistryClient {
-  hasSkill(name: string): boolean;
-  validateArguments?(name: string, args: Record<string, unknown>): boolean;
-}
+export type { SkillRegistryClient } from "../skill-registry-client.js";
+import type { SkillRegistryClient } from "../skill-registry-client.js";
 
 export function groundToolCalls(
   response: UnifiedResponse,
@@ -62,9 +60,6 @@ export function groundToolCalls(
   if (violations.length > 0) return block(violations);
   return pass(response);
 }
-
-// Re-export the SkillRegistryClient type alias for inbound alignment checker compatibility
-export type { SkillRegistryClient as OutboundSkillRegistryClient };
 
 // Helper to build a ToolCall with the right shape
 export function makeToolCallFromResponse(tc: ToolCall): ToolCall {

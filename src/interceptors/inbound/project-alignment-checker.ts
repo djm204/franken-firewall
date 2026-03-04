@@ -33,12 +33,11 @@ function estimateRequestTokens(request: UnifiedRequest): number {
 const COST_PER_TOKEN = 15 / 1_000_000;
 
 // ---------------------------------------------------------------------------
-// Skill registry interface (MOD-02 boundary — no concrete import)
+// Skill registry interface (MOD-02 boundary — shared definition)
 // ---------------------------------------------------------------------------
 
-export interface SkillRegistryClient {
-  hasSkill(name: string): boolean;
-}
+export type { SkillRegistryClient } from "../skill-registry-client.js";
+import type { SkillRegistryClient } from "../skill-registry-client.js";
 
 // ---------------------------------------------------------------------------
 // ProjectAlignmentChecker
