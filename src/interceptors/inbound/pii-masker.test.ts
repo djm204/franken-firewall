@@ -7,7 +7,7 @@ function makeRequest(content: string, system?: string): UnifiedRequest {
     id: "req-pii",
     provider: "anthropic",
     model: "claude-sonnet-4-6",
-    system,
+    ...(system !== undefined ? { system } : {}),
     messages: [{ role: "user", content }],
   };
 }

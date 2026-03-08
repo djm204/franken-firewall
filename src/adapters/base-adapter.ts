@@ -98,7 +98,7 @@ export abstract class BaseAdapter {
       code: "ADAPTER_ERROR",
       message,
       interceptor: "Pipeline",
-      payload,
+      ...(payload !== undefined ? { payload } : {}),
     };
   }
 }

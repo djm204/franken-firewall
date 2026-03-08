@@ -5,7 +5,7 @@ export type InterceptorResult<T = void> =
   | { passed: false; violations: GuardrailViolation[] };
 
 export function pass<T>(value?: T): InterceptorResult<T> {
-  return { passed: true, value };
+  return value !== undefined ? { passed: true, value } : { passed: true };
 }
 
 export function block(violations: GuardrailViolation[]): InterceptorResult<never> {
