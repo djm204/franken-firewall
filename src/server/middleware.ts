@@ -10,7 +10,7 @@ export const requestId = createMiddleware(async (c, next) => {
 });
 
 /** Global error handler — returns structured JSON error responses. */
-export const errorHandler = createMiddleware(async (c, next) => {
+export const errorHandler = createMiddleware(async (c, next): Promise<void | Response> => {
   try {
     await next();
   } catch (error) {
